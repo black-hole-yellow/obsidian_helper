@@ -1,0 +1,32 @@
+# ─────────────────────────────────────────
+#  PKM System — Configuration
+# ─────────────────────────────────────────
+
+vault:
+  path: "/Users/mishazuy/Documents/Obsidian Vault"           # Absolute or ~ path to your Obsidian vault
+  folders:
+    concepts: "Concepts"            # Atomic concept notes
+    sources:  "Sources"             # One summary note per processed source
+    maps:     "Maps"                # Manual topic maps (MOC) — untouched by program
+    review:   "Review"              # Merge suggestions, flagged notes
+    index:    "_index"              # vault_index.json, tag_index.json
+
+llm:
+  provider: "ollama"
+  model: "gemma4"             
+  base_url: "http://localhost:11434"
+  temperature: 0.2                  # Low = more consistent, structured output
+  max_tokens: 4096
+
+chunking:
+  chunk_size: 1000                  # Target tokens per chunk
+  overlap: 100                      # Token overlap between chunks to preserve context
+
+processing:
+  language: "en"                    # Source language (future: multilingual support)
+  min_concept_length: 20            # Ignore concepts shorter than N chars
+  merge_similarity_threshold: 0.82  # 0.0–1.0. Higher = stricter merge detection
+
+tags:
+  max_words: 2                      # Enforce 1-2 word tags
+  max_per_note: 8                   # Maximum tags per note

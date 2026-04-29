@@ -3,7 +3,7 @@ extractor.py — Runs LLM extraction over chunked content.
 
 This is the core processing layer. It:
   1. Loads vault context (index + tags) — lightweight, no full file reads
-  2. Sends each chunk to the LLM with a structured prompt
+  2. Sends each chunk to the LLM with a structured prompt concurrently
   3. Parses and validates the JSON response
   4. Normalises tags against the existing tag vocabulary
   5. Resolves links against existing vault notes
@@ -12,7 +12,11 @@ This is the core processing layer. It:
 
 import json
 import time
-from typing import Optional
+from typing import Optional, List, Dict
+import concurrent.futures
+
+from sentence_transformers import SentenceTransformer, util
+import torch
 
 from config import cfg
 import llm_client
@@ -27,31 +31,25 @@ from vault_manager import (
 MIN_CONCEPT_LEN = cfg["processing"]["min_concept_length"]
 MAX_TAGS        = cfg["tags"]["max_per_note"]
 
+# Load a tiny, blazing-fast embedding model. 
+# We load it globally so it stays in RAM and doesn't reload for every chunk.
+# It automatically uses MPS (Apple Silicon GPU) if available.
+device = "mps" if torch.backends.mps.is_available() else "cpu"
+print(f"[extractor] Loading embedding model on {device}...")
+embedder = SentenceTransformer('all-MiniLM-L6-v2', device=device)
 
 # ── Main entry ───────────────────────────────────────────────────────────────
 
 def extract(chunks: list[dict], source_label: str = "") -> list[dict]:
     """
-    Run LLM extraction over all chunks from a single source.
+    Run LLM extraction over all chunks concurrently.
 
     Args:
         chunks:       Output from chunker.chunk()
         source_label: Human-readable source name (e.g. "Book: Deep Work")
 
     Returns:
-        List of validated concept dicts:
-        [
-            {
-                "title":          str,
-                "summary":        str,
-                "examples":       list[str],
-                "tags":           list[str],
-                "links":          list[dict],  # {"to": str, "bidirectional": bool}
-                "source_section": str,
-                "source_label":   str,
-            },
-            ...
-        ]
+        List of validated concept dicts.
     """
     # Load vault context once — shared across all chunk calls
     vault_summary  = get_index_summary_for_llm()
@@ -63,39 +61,57 @@ def extract(chunks: list[dict], source_label: str = "") -> list[dict]:
 
     total = len(chunks)
     print(f"\n[extractor] Processing {total} chunk(s) from: {source_label or 'source'}")
-    print(f"[extractor] Vault context: {len(existing_titles)} existing notes\n")
+    print(f"[extractor] Vault context: {len(existing_titles)} existing notes")
+    print(f"[extractor] 🚀 Launching concurrent extraction (up to 3 workers)...\n")
 
-    for chunk in chunks:
-        idx = chunk["chunk_index"]
-        print(f"  Chunk {idx}/{total} — {chunk['heading']} ...", end=" ", flush=True)
+    # ── CONCURRENT EXECUTION ─────────────────────────────────────────────────
+    # max_workers=3 is ideal for 36GB RAM running a 14B model
+    max_workers = min(3, total) if total > 0 else 1
 
-        concepts = _process_chunk(
-            chunk          = chunk,
-            vault_summary  = vault_summary,
-            existing_tags  = existing_tags,
-            existing_titles = existing_titles,
-            source_label   = source_label,
-        )
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks to the thread pool
+        future_to_chunk = {
+            executor.submit(
+                _process_chunk,
+                chunk=chunk,
+                vault_summary=vault_summary,
+                existing_tags=existing_tags,
+                existing_titles=existing_titles,
+                source_label=source_label,
+            ): chunk for chunk in chunks
+        }
 
-        # Deduplicate against concepts already found in this run
-        fresh = []
-        for c in concepts:
-            key = c["title"].lower()
-            if key not in seen_titles:
-                seen_titles.add(key)
-                fresh.append(c)
+        # Process results as they finish (out of order is fine)
+        for future in concurrent.futures.as_completed(future_to_chunk):
+            chunk = future_to_chunk[future]
+            idx = chunk["chunk_index"]
+            
+            try:
+                concepts = future.result()
+                
+                # Deduplicate against concepts already found in this run
+                fresh = []
+                for c in concepts:
+                    key = c["title"].lower()
+                    if key not in seen_titles:
+                        seen_titles.add(key)
+                        fresh.append(c)
 
-        all_concepts.extend(fresh)
-        print(f"→ {len(fresh)} concept(s) found")
+                all_concepts.extend(fresh)
+                print(f"  ✅ Chunk {idx}/{total} finished — {len(fresh)} concept(s) extracted.")
 
-        # Update vault_summary mid-run so later chunks can link to
-        # concepts discovered earlier in the same source
-        for c in fresh:
-            vault_summary += f"\n{c['title']} | {', '.join(c['tags'])}"
-            existing_titles.add(c["title"].lower())
+                # Keep the running list of titles updated for deduplication purposes
+                for c in fresh:
+                    existing_titles.add(c["title"].lower())
 
-    print(f"\n[extractor] Done. Total concepts extracted: {len(all_concepts)}")
-    return all_concepts
+            except Exception as exc:
+                print(f"  ❌ Chunk {idx}/{total} generated an exception: {exc}")
+
+    # Perform a final semantic cleanup to catch overlapping concepts from different chunks
+    final_concepts = _semantic_deduplicate(all_concepts)
+
+    print(f"\n[extractor] Done. Total concepts extracted: {len(final_concepts)}")
+    return final_concepts
 
 
 # ── Chunk processing ─────────────────────────────────────────────────────────
@@ -157,6 +173,16 @@ def _validate_and_clean(
     Validate a single raw concept dict from the LLM.
     Returns None if the concept fails minimum quality checks.
     """
+
+    # ── Enforce Significance Score ───────────────────────────────────────────
+    try:
+        significance = int(raw_concept.get("significance", 0))
+    except (ValueError, TypeError):
+        significance = 0
+
+    # Drop anything the LLM didn't confidently rate as high-value
+    if significance < 7:
+        return None
 
     # ── Required fields ──────────────────────────────────────────────────────
     title   = str(raw_concept.get("title", "")).strip()
@@ -252,6 +278,57 @@ def _validate_links(raw_links: list, existing_titles: set[str]) -> list[dict]:
             valid.append({"to": target, "bidirectional": bidirectional})
 
     return valid
+
+def _semantic_deduplicate(concepts: list[dict], similarity_threshold: float = 0.85) -> list[dict]:
+    """
+    Finds semantically similar concepts extracted during the same run and merges them.
+    This prevents duplicate notes when chunks process overlapping ideas concurrently.
+    """
+    if len(concepts) < 2:
+        return concepts
+
+    print(f"\n[extractor] Running semantic deduplication on {len(concepts)} concepts...")
+    
+    # 1. Generate embeddings for all concept summaries
+    summaries = [c["summary"] for c in concepts]
+    embeddings = embedder.encode(summaries, convert_to_tensor=True)
+    
+    # 2. Calculate cosine similarity across all pairs
+    cosine_scores = util.cos_sim(embeddings, embeddings)
+    
+    merged_concepts = []
+    skip_indices = set()
+    
+    for i in range(len(concepts)):
+        if i in skip_indices:
+            continue
+            
+        base = concepts[i]
+        
+        # 3. Check for similar concepts downstream
+        for j in range(i + 1, len(concepts)):
+            if j not in skip_indices and cosine_scores[i][j].item() >= similarity_threshold:
+                overlap = concepts[j]
+                print(f"  🔗 Merging '{overlap['title']}' into '{base['title']}' (Score: {cosine_scores[i][j].item():.2f})")
+                
+                # Combine tags
+                base["tags"] = list(set(base["tags"] + overlap["tags"]))
+                
+                # Combine examples (keep up to 3)
+                combined_examples = list(set(base["examples"] + overlap["examples"]))
+                base["examples"] = combined_examples[:3]
+                
+                # Combine links
+                all_links = {link["to"]: link for link in base["links"] + overlap["links"]}
+                base["links"] = list(all_links.values())
+                
+                # Mark the duplicate to be skipped
+                skip_indices.add(j)
+                
+        merged_concepts.append(base)
+        
+    print(f"[extractor] Deduplication finished. {len(merged_concepts)} unique concepts remain.")
+    return merged_concepts
 
 
 # ── Debug helpers ─────────────────────────────────────────────────────────────

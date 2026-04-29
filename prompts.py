@@ -9,19 +9,15 @@ touching extraction logic. Each function returns a
 # ── Extraction prompt ────────────────────────────────────────────────────────
 
 EXTRACTION_SYSTEM = """You are a knowledge extraction engine for a personal knowledge base.
-Your job is to read a chunk of source material and extract every meaningful atomic concept,
-idea, event, action, or principle it contains.
+Your job is to read a chunk of source material and extract only the most valuable, high-level concepts.
 
 RULES:
-- Each extracted concept/event/action/principle must be self-contained and understandable on its own
-- Prefer specific, concrete ideas over vague generalities
-- Extract only what is genuinely present in the text — do not invent or infer beyond it
-- Titles must be 2-6 words, noun-phrase style (e.g. "Attention Residue Effect")
-- Summaries must be 3-5 sentences, high-level but precise
-- Examples must come directly from the source text — do not fabricate them
-- Tags: 1-2 words max, describe an event or action, reuse existing tags when possible
-- Links: only reference concepts that have a clear, meaningful relationship
-- Return ONLY valid JSON — no explanation, no markdown, no preamble"""
+- QUALITY OVER QUANTITY: Extract a MAXIMUM of 3 concepts per chunk. If there is only 1 good idea, only extract 1.
+- THE SIGNIFICANCE FILTER: Assign a "significance" score from 1 to 10 for each concept (10 being the core thesis of the document). Only extract concepts that score 7 or higher. Ignore minor details, introductory text, and boilerplate.
+- Each extracted concept must be self-contained and understandable on its own.
+- Titles must be 2-6 words, noun-phrase style (e.g. "Attention Residue Effect").
+- Summaries must be 3-5 sentences, high-level but precise.
+- Return ONLY valid JSON — no explanation, no markdown, no preamble."""
 
 
 def extraction_prompt(
@@ -33,11 +29,7 @@ def extraction_prompt(
     existing_tags: str,
     vault_summary: str,
 ) -> tuple[str, str]:
-    """
-    Build the extraction prompt for a single chunk.
-
-    Returns (system_prompt, user_prompt) tuple.
-    """
+    
     system = EXTRACTION_SYSTEM
 
     user = f"""SOURCE: {source_title}
@@ -55,30 +47,25 @@ TEXT TO EXTRACT FROM:
 {chunk_text}
 \"\"\"
 
-Extract all atomic concepts from this text. For each concept, determine:
-1. Which existing notes it should link to (use exact titles from the list above)
-2. Whether each link is bidirectional (the other concept is equally about this one)
-   or one-directional (this concept references the other, but not vice versa)
-3. Which existing tags apply, and what new tags are needed
-
+Extract high-value concepts. For each concept, determine links and tags.
 Return this exact JSON structure:
 {{
   "concepts": [
     {{
       "title": "Concept Title Here",
       "summary": "3-5 sentence high-level summary of the concept.",
+      "significance": 8,
       "examples": ["example 1 from source", "example 2 from source"],
-      "tags": ["tag-one", "tag-two", "tag-three"],
+      "tags": ["tag-one", "tag-two"],
       "links": [
-        {{"to": "Exact Title Of Related Note", "bidirectional": true}},
-        {{"to": "Another Related Note", "bidirectional": false}}
+        {{"to": "Exact Title Of Related Note", "bidirectional": true}}
       ],
       "source_section": "{section_heading}"
     }}
   ]
 }}
 
-If no meaningful concepts exist in this chunk, return: {{"concepts": []}}"""
+If no concepts score a 7 or higher in this chunk, return: {{"concepts": []}}"""
 
     return system, user
 

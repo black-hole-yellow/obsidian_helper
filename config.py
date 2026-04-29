@@ -9,6 +9,9 @@ import yaml
 
 _CONFIG_PATH = Path(__file__).parent / "config.yaml"
 
+MAX_CHUNK_TOKENS = 1500 
+CHUNK_OVERLAP = 150
+
 
 def _load() -> dict:
     with open(_CONFIG_PATH, "r") as f:

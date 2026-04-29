@@ -83,6 +83,7 @@ def call(prompt: str, system: str = "", expect_json: bool = False) -> str:
         "model":   MODEL,
         "messages": messages,
         "stream":  False,
+        "format": "json" if expect_json else "",
         "options": {
             "temperature":  TEMP,
             "num_predict":  MAX_TOKENS,

@@ -1,51 +1,53 @@
 import tiktoken
-from config import MAX_CHUNK_TOKENS, CHUNK_OVERLAP
+from config import cfg
 
-def get_tokenizer():
-    # 'cl100k_base' is standard for OpenAI, but serves as a highly accurate 
-    # and lightning-fast proxy tokenizer for models like Qwen and Llama.
-    return tiktoken.get_encoding("cl100k_base")
+# Define constants (you can also move these to config.yaml)
+MAX_CHUNK_TOKENS = 1200 
+CHUNK_OVERLAP = 100
 
-def count_tokens(text: str) -> int:
-    """Returns the exact token count of a string."""
-    tokenizer = get_tokenizer()
-    return len(tokenizer.encode(text))
-
-def chunk_text(text: str, max_tokens: int = MAX_CHUNK_TOKENS, overlap: int = CHUNK_OVERLAP) -> list[str]:
+def chunk(text: str, source_title: str = "") -> list[dict]:
     """
-    Intelligently splits text into chunks. 
-    If the text is smaller than max_tokens, it returns the whole text.
+    Splits text into chunks based on token counts.
+    If the text is small, it processes as a single chunk.
     """
     if not text.strip():
         return []
 
-    tokenizer = get_tokenizer()
+    tokenizer = tiktoken.get_encoding("cl100k_base")
     tokens = tokenizer.encode(text)
     total_tokens = len(tokens)
 
-    # ── DYNAMIC SHORT-CIRCUIT ───────────────────────────────────────────────
-    # If the entire document fits within our token limit, DO NOT CHUNK IT.
-    # This is crucial for small articles to give the LLM full context.
-    if total_tokens <= max_tokens:
-        print(f"📄 Document is {total_tokens} tokens. Processing as a single chunk.")
-        return [text]
+    # DYNAMIC SHORT-CIRCUIT: Don't chunk if it fits in one go
+    if total_tokens <= MAX_CHUNK_TOKENS:
+        return [{
+            "text": text,
+            "heading": "Full Content",
+            "source_title": source_title,
+            "chunk_index": 1,
+            "total_chunks": 1
+        }]
 
-    print(f"✂️ Document is {total_tokens} tokens. Splitting into chunks...")
-    
     chunks = []
     start_idx = 0
-
-    # ── PRECISION CHUNKING WITH OVERLAP ─────────────────────────────────────
+    chunk_num = 1
+    
     while start_idx < total_tokens:
-        # Get the slice of tokens
-        end_idx = min(start_idx + max_tokens, total_tokens)
+        end_idx = min(start_idx + MAX_CHUNK_TOKENS, total_tokens)
         chunk_tokens = tokens[start_idx:end_idx]
         
-        # Decode back to text
-        chunk_text = tokenizer.decode(chunk_tokens)
-        chunks.append(chunk_text)
+        chunks.append({
+            "text": tokenizer.decode(chunk_tokens),
+            "heading": f"Part {chunk_num}",
+            "source_title": source_title,
+            "chunk_index": chunk_num,
+            "total_chunks": 0 # Will update below
+        })
         
-        # Move start index forward, subtracting the overlap
-        start_idx += (max_tokens - overlap)
+        start_idx += (MAX_CHUNK_TOKENS - CHUNK_OVERLAP)
+        chunk_num += 1
 
+    # Update total count
+    for c in chunks:
+        c["total_chunks"] = len(chunks)
+        
     return chunks

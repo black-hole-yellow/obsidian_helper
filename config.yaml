@@ -3,30 +3,42 @@
 # ─────────────────────────────────────────
 
 vault:
-  path: "/Users/mishazuy/Documents/Obsidian Vault"           # Absolute or ~ path to your Obsidian vault
+  path: "/Users/mishazuy/Documents/Obsidian Vault"
   folders:
-    concepts: "Concepts"            # Atomic concept notes
-    sources:  "Sources"             # One summary note per processed source
-    maps:     "Maps"                # Manual topic maps (MOC) — untouched by program
-    review:   "Review"              # Merge suggestions, flagged notes
-    index:    "_index"              # vault_index.json, tag_index.json
+    concepts: "Concepts"
+    sources:  "Sources"
+    maps:     "Maps"
+    review:   "Review"
+    index:    "_index"
+
+# ── LLM Provider ──────────────────────────────────────────────────────────────
+# Switch between local (Ollama)by changing these two lines.
+#
+# LOCAL options (Ollama must be running: `ollama serve`):
+#   provider: "ollama"
+#   model: "gemma3:7b"       ← fast
+#   model: "gemma3:27b"      ← smarter, slower
+# ─────────────────────────────────────────────────────────────────────────────
 
 llm:
   provider: "ollama"
-  model: "gemma4"             
-  base_url: "http://localhost:11434"
-  temperature: 0.2                  # Low = more consistent, structured output
+  model: "gemma4"
+  base_url: "http://localhost:11434"   # only used by Ollama
+  temperature: 0.2
   max_tokens: 4096
 
 chunking:
-  chunk_size: 1000                  # Target tokens per chunk
-  overlap: 100                      # Token overlap between chunks to preserve context
+  chunk_size: 1000
+  overlap: 100
+  batch_size: 3        # chunks combined into one LLM call (2-4 recommended)
 
 processing:
-  language: "en"                    # Source language (future: multilingual support)
-  min_concept_length: 20            # Ignore concepts shorter than N chars
-  merge_similarity_threshold: 0.82  # 0.0–1.0. Higher = stricter merge detection
+  language: "en"
+  min_concept_length: 20
+  merge_similarity_threshold: 0.82
+  vault_context_limit: 50   # max notes injected into each prompt
+  tag_context_limit: 60     # max tags injected into each prompt
 
 tags:
-  max_words: 2                      # Enforce 1-2 word tags
-  max_per_note: 8                   # Maximum tags per note
+  max_words: 2
+  max_per_note: 3

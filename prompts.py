@@ -6,66 +6,66 @@ touching extraction logic. Each function returns a
 (system, user) tuple ready to pass to llm_client.
 """
 
-# ── Extraction prompt ────────────────────────────────────────────────────────
+# ── Batch extraction prompt ───────────────────────────────────────────────────
 
 EXTRACTION_SYSTEM = """You are a knowledge extraction engine for a personal knowledge base.
-Your job is to read a chunk of source material and extract only the most valuable, high-level concepts.
+Your job is to read source material and extract only the most valuable, high-level concepts.
 
 RULES:
-- QUALITY OVER QUANTITY: Extract a MAXIMUM of 3 concepts per chunk. If there is only 1 good idea, only extract 1.
-- THE SIGNIFICANCE FILTER: Assign a "significance" score from 1 to 10 for each concept (10 being the core thesis of the document). Only extract concepts that score 7 or higher. Ignore minor details, introductory text, and boilerplate.
-- Each extracted concept must be self-contained and understandable on its own.
-- Titles must be 2-6 words, noun-phrase style (e.g. "Attention Residue Effect").
-- Summaries must be 3-5 sentences, high-level but precise.
+- QUALITY OVER QUANTITY: Extract a MAXIMUM of 3 concepts per batch. Only the best ideas.
+- THE SIGNIFICANCE FILTER: Assign a "significance" score 1-10 per concept. Only extract 7+.
+- Each concept must be self-contained and understandable on its own.
+- Titles: 2-6 words, noun-phrase style (e.g. "Attention Residue Effect").
+- Summaries: 3-5 sentences, high-level but precise.
 - Return ONLY valid JSON — no explanation, no markdown, no preamble."""
 
 
 def extraction_prompt(
-    chunk_text: str,
-    section_heading: str,
+    chunks: list[dict],       # batch of chunk dicts
     source_title: str,
-    chunk_index: int,
-    total_chunks: int,
     existing_tags: str,
     vault_summary: str,
 ) -> tuple[str, str]:
-    
+    """
+    Build a single prompt covering a batch of chunks.
+    Sending 2-3 chunks per call cuts round-trip overhead significantly.
+    """
     system = EXTRACTION_SYSTEM
 
-    user = f"""SOURCE: {source_title}
-SECTION: {section_heading}
-POSITION: Chunk {chunk_index} of {total_chunks}
+    # Build the text sections block
+    sections = ""
+    for c in chunks:
+        sections += f"\n--- SECTION: {c['heading']} (chunk {c['chunk_index']}/{c['total_chunks']}) ---\n"
+        sections += c["text"] + "\n"
 
-EXISTING TAGS IN MY KNOWLEDGE BASE (reuse these when possible):
+    user = f"""SOURCE: {source_title}
+
+EXISTING TAGS (reuse when possible):
 {existing_tags}
 
-EXISTING NOTES IN MY KNOWLEDGE BASE (use for linking — reference by exact title):
+EXISTING NOTES (link by exact title only):
 {vault_summary}
 
-TEXT TO EXTRACT FROM:
-\"\"\"
-{chunk_text}
-\"\"\"
+TEXT:
+{sections.strip()}
 
-Extract high-value concepts. For each concept, determine links and tags.
-Return this exact JSON structure:
+Extract the most valuable concepts across all sections above.
+Return this exact JSON:
 {{
   "concepts": [
     {{
-      "title": "Concept Title Here",
-      "summary": "3-5 sentence high-level summary of the concept.",
+      "title": "Concept Title",
+      "summary": "3-5 sentence summary.",
       "significance": 8,
-      "examples": ["example 1 from source", "example 2 from source"],
+      "examples": ["example from source"],
       "tags": ["tag-one", "tag-two"],
-      "links": [
-        {{"to": "Exact Title Of Related Note", "bidirectional": true}}
-      ],
-      "source_section": "{section_heading}"
+      "links": [{{"to": "Exact Note Title", "bidirectional": true}}],
+      "source_section": "section name where concept was found"
     }}
   ]
 }}
 
-If no concepts score a 7 or higher in this chunk, return: {{"concepts": []}}"""
+If nothing scores 7+, return: {{"concepts": []}}"""
 
     return system, user
 

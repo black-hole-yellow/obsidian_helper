@@ -1,9 +1,12 @@
 # PKM System — Python dependencies
-# Install with: pip install -r requirements.txt
+# Install: pip install -r requirements.txt
 
 # Core
 pyyaml>=6.0
 requests>=2.31
+
+# Token-accurate chunking
+tiktoken>=0.7
 
 # PDF extraction
 pymupdf>=1.24
@@ -16,7 +19,7 @@ lxml>=5.0
 yt-dlp>=2024.1
 openai-whisper>=20231117
 
-# Merge detection (local embeddings)
+# Merge detection (local embeddings — optional but recommended)
 sentence-transformers>=3.0
 
 # CLI

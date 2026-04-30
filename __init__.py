@@ -1,12 +1,11 @@
 """
-preprocessors/__init__.py
+preprocessors/__init__.py — Single entry point for all source types.
 
-Single entry point for all source types.
 All preprocessors return the same dict shape:
   {
-      "text":     str,           # full clean text
-      "sections": list[dict],    # [{"heading": str, "content": str, ...}]
-      "metadata": dict           # title, word_count, source info
+      "text":     str,
+      "sections": list[dict],
+      "metadata": dict
   }
 """
 
@@ -14,16 +13,6 @@ from pathlib import Path
 
 
 def load(source: str, source_type: str) -> dict:
-    """
-    Route a source to the correct preprocessor.
-
-    Args:
-        source:      File path or YouTube URL
-        source_type: One of "text", "pdf", "youtube"
-
-    Returns:
-        Standardized content dict
-    """
     source_type = source_type.lower().strip()
 
     if source_type == "text":
